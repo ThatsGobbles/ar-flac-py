@@ -4,6 +4,8 @@ import typing as tp
 import subprocess as sub
 import math
 
+import requests as req
+
 CDDA_BITS_PER_FRAME = 588
 CDDA_FRAMES_PER_SEC = 75
 ACCURATERIP_DB_URL = 'http://www.accuraterip.com/accuraterip'
@@ -116,3 +118,8 @@ if __name__ == '__main__':
 
     ar_db_url = create_accuraterip_db_url(*ar_disc_ids, len(flac_files))
     print(ar_db_url)
+
+    response = req.get(ar_db_url)
+
+    # TODO: Handle 404 errors more gracefully.
+    response.raise_for_status()
