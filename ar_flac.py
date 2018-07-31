@@ -6,11 +6,25 @@ import math
 
 CDDA_BITS_PER_FRAME = 588
 CDDA_FRAMES_PER_SEC = 75
+ACCURATERIP_DB_URL = 'http://www.accuraterip.com/accuraterip'
 
 class ARDiscIds(tp.NamedTuple):
     disc_id_1: int
     disc_id_2: int
     cddb_disc_id: int
+
+def create_accuraterip_db_url(disc_id_1: int, disc_id_2: int, cddb_disc_id: int, num_tracks: int) -> str:
+    sub_comps = (
+        ACCURATERIP_DB_URL,
+        f'{disc_id_1 & 0xF:x}',
+        f'{disc_id_1 >> 4 & 0xF:x}',
+        f'{disc_id_1 >> 8 & 0xF:x}',
+        f'dBAR-{num_tracks:0>3d}-{disc_id_1:0>8x}-{disc_id_2:0>8x}-{cddb_disc_id:0>8x}.bin',
+    )
+
+    url = '/'.join(sub_comps)
+
+    return url
 
 def get_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Validate FLAC files against the online AccurateRip database.')
@@ -97,3 +111,8 @@ if __name__ == '__main__':
 
     ar_disc_ids = calc_ar_disc_ids(track_offsets)
     print(ar_disc_ids)
+
+    print('Querying AccurateRip DB...')
+
+    ar_db_url = create_accuraterip_db_url(*ar_disc_ids, len(flac_files))
+    print(ar_db_url)
