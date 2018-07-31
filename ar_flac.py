@@ -5,11 +5,7 @@ import subprocess as sub
 import math
 
 CDDA_BITS_PER_FRAME = 588
-
-class TrackInfo(tp.NamedTuple):
-    offset: int
-    length: int
-    num_samples: int
+CDDA_FRAMES_PER_SEC = 75
 
 def get_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Validate FLAC files against the online AccurateRip database.')
@@ -21,21 +17,24 @@ def get_arg_parser() -> argparse.ArgumentParser:
 def get_flac_files_in_dir(dir_path: pl.Path) -> tp.List[pl.Path]:
     return sorted(dir_path.glob('*.flac'))
 
-def get_track_data(flac_files: tp.Iterable[pl.Path]) -> tp.Generator[TrackInfo, None, None]:
+def yield_track_offsets(flac_files: tp.Iterable[pl.Path]) -> tp.Generator[int, None, None]:
     offset = 0
 
     for f in flac_files:
-        # Use `metaflac` to get track offsets, lengths, and samples.
+        yield offset
+
+        # Use `metaflac` to get track lengths/samples.
         process_args = ('metaflac', '--show-total-samples', str(f))
         num_samples = int(sub.check_output(process_args))
-        print(f'# of samples: {num_samples}')
+        # print(f'# of samples: {num_samples}')
 
         length = int(math.ceil(num_samples / CDDA_BITS_PER_FRAME))
-        print(f'Length: {length}')
-
-        yield TrackInfo(offset, length, num_samples)
+        # print(f'Length: {length}')
 
         offset += length
+
+    # Yield the offset after the final track.
+    yield offset
 
 if __name__ == '__main__':
     parser = get_arg_parser()
@@ -48,4 +47,4 @@ if __name__ == '__main__':
     for f in flac_files:
         print(f'Found file: {f.name}')
 
-    print(list(get_track_data(flac_files)))
+    print(list(yield_track_offsets(flac_files)))
