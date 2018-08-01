@@ -11,6 +11,7 @@ CDDA_BITS_PER_FRAME = 588
 CDDA_FRAMES_PER_SEC = 75
 ACCURATERIP_DB_URL = 'http://www.accuraterip.com/accuraterip'
 
+
 class ARDiscInfo(tp.NamedTuple):
     disc_id_1: int
     disc_id_2: int
@@ -20,6 +21,7 @@ class ARDiscInfo(tp.NamedTuple):
 class ARTrackInfo(tp.NamedTuple):
     confidence: int
     crc: int
+
 
 def create_accuraterip_db_url(ar_disc_info: ARDiscInfo) -> str:
     disc_id_1 = ar_disc_info.disc_id_1
@@ -100,7 +102,7 @@ def calc_ar_disc_info(track_offsets: tp.Iterable[int]) -> ARDiscInfo:
     return ARDiscInfo(disc_id_1, disc_id_2, cddb_disc_id, num_tracks)
 
 def sum_digits(n: int) -> int:
-    '''Sums the digits in an integer.'''
+    '''Sums the digits in a non-negative integer.'''
     r = 0
 
     while n > 0:
@@ -132,6 +134,55 @@ def yield_data_from_bin(ar_bin_data: bytes, ar_disc_info: ARDiscInfo) -> tp.Gene
         yield(ARTrackInfo(confidence=conf, crc=crc))
         print(f'Track {i}: conf={conf}, crc={crc}')
 
+def yield_crcs_from_flac_files(flac_files: tp.Iterable[pl.Path]) -> tp.Generator[int, None, None]:
+    is_first = True
+
+    for f, is_last in lookahead(flac_files):
+        process_args = (
+            'flac',
+            '-d',
+            '-c',
+            '-f',
+            '--force-raw-format',
+            '--totally-silent',
+            '--endian=little',
+            '--sign=signed',
+            str(f),
+        )
+
+        audio_data = sub.check_output(process_args)
+
+        # For the first track, chop off the first 2939 samples.
+        # For the last track, chop off the last 2940 samples (exactly 5 frames).
+        # Note that for an album with only one track, that track will be both first AND last!
+
+        if is_first:
+            is_first = False
+
+        if is_last:
+            pass
+
+        yield 0
+
+T = tp.TypeVar('T')
+
+def lookahead(iterable: tp.Iterable[T]) -> tp.Generator[T, None, None]:
+    '''Pass through all values from the given iterable,
+    along with a flag indicating if that element is the last one.'''
+    # Get an iterator and pull the first value.
+    it = iter(iterable)
+    last = next(it)
+
+    # Run the iterator to exhaustion (starting from the second value).
+    for val in it:
+        # Report the *previous* value (more to come).
+        yield last, False
+        last = val
+
+    # Report the last value.
+    yield last, True
+
+
 if __name__ == '__main__':
     parser = get_arg_parser()
     parsed_args = parser.parse_args()
@@ -162,3 +213,5 @@ if __name__ == '__main__':
     ar_bin_data = response.content
 
     bin_data = list(yield_data_from_bin(ar_bin_data, ar_disc_info))
+
+    list(yield_crcs_from_flac_files(flac_files))
