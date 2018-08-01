@@ -3,6 +3,7 @@ import pathlib as pl
 import typing as tp
 import subprocess as sub
 import math
+import struct
 
 import requests as req
 
@@ -10,12 +11,22 @@ CDDA_BITS_PER_FRAME = 588
 CDDA_FRAMES_PER_SEC = 75
 ACCURATERIP_DB_URL = 'http://www.accuraterip.com/accuraterip'
 
-class ARDiscIds(tp.NamedTuple):
+class ARDiscInfo(tp.NamedTuple):
     disc_id_1: int
     disc_id_2: int
     cddb_disc_id: int
+    num_tracks: int
 
-def create_accuraterip_db_url(disc_id_1: int, disc_id_2: int, cddb_disc_id: int, num_tracks: int) -> str:
+class ARTrackInfo(tp.NamedTuple):
+    confidence: int
+    crc: int
+
+def create_accuraterip_db_url(ar_disc_info: ARDiscInfo) -> str:
+    disc_id_1 = ar_disc_info.disc_id_1
+    disc_id_2 = ar_disc_info.disc_id_2
+    cddb_disc_id = ar_disc_info.cddb_disc_id
+    num_tracks = ar_disc_info.num_tracks
+
     sub_comps = (
         ACCURATERIP_DB_URL,
         f'{disc_id_1 & 0xF:x}',
@@ -57,12 +68,13 @@ def yield_track_offsets(flac_files: tp.Iterable[pl.Path]) -> tp.Generator[int, N
     # Yield the offset after the final track.
     yield offset
 
-def calc_ar_disc_ids(track_offsets: tp.Iterable[int]) -> ARDiscIds:
+def calc_ar_disc_info(track_offsets: tp.Iterable[int]) -> ARDiscInfo:
     disc_id_1 = 0
     disc_id_2 = 0
     cddb_disc_id = 0
 
     first_offset = None
+    num_tracks = len(track_offsets) - 1
 
     for track_num, track_offset in enumerate(track_offsets, start=0):
         if first_offset is None:
@@ -71,21 +83,21 @@ def calc_ar_disc_ids(track_offsets: tp.Iterable[int]) -> ARDiscIds:
         disc_id_1 += track_offset
         disc_id_2 += (track_offset if bool(track_offset) else 1) * (track_num + 1)
 
-        if track_num < len(track_offsets) - 1:
+        if track_num < num_tracks:
             cddb_disc_id += sum_digits(int(track_offset // CDDA_FRAMES_PER_SEC) + 2)
 
     if first_offset is not None:
         cddb_disc_id = (
             ((cddb_disc_id % 255) << 24)
             + (((track_offset // CDDA_FRAMES_PER_SEC) - (first_offset // 75)) << 8)
-            + (len(track_offsets) - 1)
+            + num_tracks
         )
 
     disc_id_1 &= 0xFFFFFFFF
     disc_id_2 &= 0xFFFFFFFF
     cddb_disc_id &= 0xFFFFFFFF
 
-    return ARDiscIds(disc_id_1, disc_id_2, cddb_disc_id)
+    return ARDiscInfo(disc_id_1, disc_id_2, cddb_disc_id, num_tracks)
 
 def sum_digits(n: int) -> int:
     '''Sums the digits in an integer.'''
@@ -96,6 +108,29 @@ def sum_digits(n: int) -> int:
         n //= 10
 
     return r
+
+def yield_data_from_bin(ar_bin_data: bytes, ar_disc_info: ARDiscInfo) -> tp.Generator[ARTrackInfo, None, None]:
+    print(f'Extracting CRCs from BIN data, {len(ar_bin_data)} byte(s)')
+
+    # The header data consists of the first 13 bytes.
+    header_data = ar_bin_data[:13]
+
+    # The remaining data is per-track confidence and CRC data.
+    per_track_data = ar_bin_data[13:]
+
+    # Stored as little-endian: i8, u32, u32, u32.
+    num_tracks, disc_id_1, disc_id_2, cddb_disc_id = struct.unpack('<bIII', header_data)
+
+    assert num_tracks == ar_disc_info.num_tracks
+    assert disc_id_1 == ar_disc_info.disc_id_1
+    assert disc_id_2 == ar_disc_info.disc_id_2
+    assert cddb_disc_id == ar_disc_info.cddb_disc_id
+
+    print(num_tracks, disc_id_1, disc_id_2, cddb_disc_id)
+
+    for i, (conf, crc, _) in enumerate(struct.iter_unpack('<bII', per_track_data), start=1):
+        yield(ARTrackInfo(confidence=conf, crc=crc))
+        print(f'Track {i}: conf={conf}, crc={crc}')
 
 if __name__ == '__main__':
     parser = get_arg_parser()
@@ -111,15 +146,19 @@ if __name__ == '__main__':
     track_offsets = list(yield_track_offsets(flac_files))
     print(track_offsets)
 
-    ar_disc_ids = calc_ar_disc_ids(track_offsets)
-    print(ar_disc_ids)
+    ar_disc_info = calc_ar_disc_info(track_offsets)
+    print(ar_disc_info)
 
     print('Querying AccurateRip DB...')
 
-    ar_db_url = create_accuraterip_db_url(*ar_disc_ids, len(flac_files))
+    ar_db_url = create_accuraterip_db_url(ar_disc_info)
     print(ar_db_url)
 
     response = req.get(ar_db_url)
 
     # TODO: Handle 404 errors more gracefully.
     response.raise_for_status()
+
+    ar_bin_data = response.content
+
+    bin_data = list(yield_data_from_bin(ar_bin_data, ar_disc_info))
