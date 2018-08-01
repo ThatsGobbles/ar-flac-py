@@ -7,8 +7,10 @@ import struct
 
 import requests as req
 
-CDDA_BITS_PER_FRAME = 588
-CDDA_FRAMES_PER_SEC = 75
+CDDA_SAMPLES_PER_FRAME = 588
+CDDA_SAMPLES_PER_SECTOR = 588
+CDDA_FRAMES_PER_SECOND = 75
+CDDA_BYTES_PER_SAMPLE = 4
 ACCURATERIP_DB_URL = 'http://www.accuraterip.com/accuraterip'
 
 
@@ -62,7 +64,7 @@ def yield_track_offsets(flac_files: tp.Iterable[pl.Path]) -> tp.Generator[int, N
         num_samples = int(sub.check_output(process_args))
         # print(f'# of samples: {num_samples}')
 
-        length = int(math.ceil(num_samples / CDDA_BITS_PER_FRAME))
+        length = int(math.ceil(num_samples / CDDA_SAMPLES_PER_FRAME))
         # print(f'Length: {length}')
 
         offset += length
@@ -86,12 +88,12 @@ def calc_ar_disc_info(track_offsets: tp.Iterable[int]) -> ARDiscInfo:
         disc_id_2 += (track_offset if bool(track_offset) else 1) * (track_num + 1)
 
         if track_num < num_tracks:
-            cddb_disc_id += sum_digits(int(track_offset // CDDA_FRAMES_PER_SEC) + 2)
+            cddb_disc_id += sum_digits(int(track_offset // CDDA_FRAMES_PER_SECOND) + 2)
 
     if first_offset is not None:
         cddb_disc_id = (
             ((cddb_disc_id % 255) << 24)
-            + (((track_offset // CDDA_FRAMES_PER_SEC) - (first_offset // 75)) << 8)
+            + (((track_offset // CDDA_FRAMES_PER_SECOND) - (first_offset // 75)) << 8)
             + num_tracks
         )
 
@@ -138,6 +140,8 @@ def yield_crcs_from_flac_files(flac_files: tp.Iterable[pl.Path]) -> tp.Generator
     is_first = True
 
     for f, is_last in lookahead(flac_files):
+        crc = 0
+
         process_args = (
             'flac',
             '-d',
